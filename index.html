@@ -685,14 +685,14 @@
           throw new Error(JSON.stringify(response, null, 2));
         }
 
-        renderAdminDashboard(response.pending || []);
-
+        renderAdminDashboard(response.pending || [], response.activeReservations || []);
+        
       } catch (error) {
         renderError(error);
       }
     }
 
-    function renderAdminDashboard(pending) {
+    function renderAdminDashboard(pending, activeReservations) {
       app.className = 'status';
 
       const pendingHtml = pending.length
@@ -718,17 +718,45 @@
           `).join('')
         : '<div class="date-card">承認待ちの仮予約はありません。</div>';
 
+      const activeHtml = activeReservations && activeReservations.length
+        ? activeReservations.map(r => `
+            <div class="date-card">
+              <strong>${escapeHtml(r.date)}（${escapeHtml(r.weekday_jp)}） ${escapeHtml(r.start_time)}〜${escapeHtml(r.end_time)}</strong><br>
+              選択枠：${escapeHtml(r.selected_slots_label || '')}<br>
+              予約ID：${escapeHtml(r.reservation_id)}<br>
+              状態：${escapeHtml(r.status)}<br>
+              お客様：${escapeHtml(r.customer_name)} 様<br>
+              会員種別：${escapeHtml(r.member_type)}<br>
+              車両：${escapeHtml(r.vehicle_name)}<br>
+              メニュー：${escapeHtml(r.menu_name)}<br>
+              利用枠数：${escapeHtml(r.slot_count)}枠（${escapeHtml(r.duration_min)}分）<br>
+              作業内容：${escapeHtml(r.work_detail)}<br>
+              持込部品：${escapeHtml(r.parts_brought)}<br>
+              補足：${escapeHtml(r.customer_message)}<br>
+
+              <button class="danger" onclick="cancelReservation('${escapeAttr(r.reservation_id)}', 'release')">キャンセルして枠を開放する</button>
+              <button class="secondary" onclick="cancelReservation('${escapeAttr(r.reservation_id)}', 'keep_blocked')">キャンセルするが枠は閉めたままにする</button>
+            </div>
+          `).join('')
+        : '<div class="date-card">現在有効な予約はありません。</div>';
+
       app.innerHTML = `
         <strong>管理者画面</strong><br>
-        承認待ちの仮予約一覧です。
+        承認待ちの確認と、予約キャンセル処理ができます。
 
         <h2>承認待ち</h2>
         ${pendingHtml}
 
+        <h2>予約管理</h2>
+        <div class="small">
+          お客様から公式LINEでキャンセル依頼があった場合、内容確認後にここからキャンセル処理してください。<br>
+          スプレッドシートを直接編集せず、この画面から操作する運用を推奨します。
+        </div>
+        ${activeHtml}
+
         <button class="secondary" onclick="renderHome()">ホームに戻る</button>
       `;
     }
-
     async function approveReservation(reservationId, slotHandling) {
       const label = slotHandling === 'keep_open'
         ? 'この予約を承認し、この時間帯を追加受付可能にしますか？'
@@ -820,6 +848,67 @@
       }
     }
 
+    async function cancelReservation(reservationId, cancelSlotHandling) {
+      const handlingLabel = cancelSlotHandling === 'keep_blocked'
+        ? 'キャンセルしますが、この時間帯は予約不可のままにします。'
+        : 'キャンセルして、この時間帯を空き枠に戻します。';
+
+      const reason = prompt(
+        `${handlingLabel}\n\nキャンセル理由・メモを入力してください。`,
+        ''
+      );
+
+      if (reason === null) {
+        return;
+      }
+
+      const confirmMessage = cancelSlotHandling === 'keep_blocked'
+        ? 'この予約をキャンセルし、枠は閉めたままにしますか？'
+        : 'この予約をキャンセルし、枠を開放しますか？';
+
+      if (!confirm(confirmMessage)) {
+        return;
+      }
+
+      try {
+        app.className = 'status';
+        app.innerHTML = 'キャンセル処理中です...';
+
+        const response = await jsonp(API_URL, {
+          action: 'cancelReservation',
+          lineUserId: lineProfile.userId,
+          reservationId,
+          cancelSlotHandling,
+          reason
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        const slotHandlingLabel = response.cancel_slot_handling === 'keep_blocked'
+          ? '枠は閉めたまま'
+          : '枠を開放';
+
+        app.className = 'status';
+        app.innerHTML = `
+          <strong>キャンセル処理が完了しました</strong><br><br>
+          予約ID：${escapeHtml(response.reservation_id)}<br>
+          状態：${escapeHtml(response.status)}<br>
+          枠の扱い：${escapeHtml(slotHandlingLabel)}<br>
+          Googleカレンダー：${response.calendarDeleteResult && response.calendarDeleteResult.ok ? '削除済みまたは対象なし' : '削除失敗'}<br>
+          お客様へのLINE通知：${response.lineNotification && response.lineNotification.ok ? '送信済み' : '送信失敗'}<br><br>
+
+          <button onclick="showAdminDashboard()">管理者画面に戻る</button>
+          <button class="secondary" onclick="renderHome()">ホームに戻る</button>
+        `;
+
+      } catch (error) {
+        renderError(error);
+      }
+    }
+
+    
     function formatPolicy(policy) {
       if (policy === 'immediate') return '承認後すぐ確定';
       if (policy === 'six_days') return '6日前確定';
