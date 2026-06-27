@@ -4,7 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>eFactory予約</title>
+
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -13,12 +15,23 @@
       background: #f7f7f7;
       color: #222;
     }
+
     .card {
       background: #fff;
       border-radius: 12px;
       padding: 20px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
+
+    h1 {
+      font-size: 22px;
+      margin-top: 0;
+    }
+
+    p {
+      line-height: 1.6;
+    }
+
     .status {
       margin-top: 16px;
       padding: 12px;
@@ -28,10 +41,17 @@
       line-height: 1.7;
       word-break: break-all;
     }
+
     .error {
       background: #fff0f0;
       color: #b00020;
     }
+
+    .warning {
+      background: #fff8e5;
+      color: #5a3b00;
+    }
+
     button {
       width: 100%;
       padding: 14px;
@@ -43,16 +63,24 @@
       font-size: 16px;
       font-weight: bold;
     }
+
     pre {
       white-space: pre-wrap;
       font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .small {
+      font-size: 12px;
+      color: #666;
     }
   </style>
 </head>
+
 <body>
   <div class="card">
     <h1>eFactory予約テスト</h1>
-    <p>LIFF起動確認です。</p>
+    <p>LINEユーザー情報を予約DBへ登録するテストです。</p>
 
     <div id="result" class="status">
       起動中です...
@@ -63,6 +91,9 @@
 
   <script>
     const LIFF_ID = '2010526723-NFUasgWN';
+
+    const API_URL = 'https://script.google.com/macros/s/AKfycbzwogK43RNJA29ujZsdadNXDHFuDk4envDHyQxyTNY5KhcyfyHGTTdybUV-jipnIxxBVA/exec';
+
     const result = document.getElementById('result');
 
     async function main() {
@@ -70,7 +101,7 @@
         result.innerHTML = 'LIFF SDKを確認中...';
 
         if (typeof liff === 'undefined') {
-          throw new Error('LIFF SDKが読み込めていません。');
+          throw new Error('LIFF SDKが読み込めていません。通信環境を確認してください。');
         }
 
         result.innerHTML = 'LIFFを初期化しています...';
@@ -83,16 +114,39 @@
           return;
         }
 
+        result.innerHTML = 'LINEプロフィールを取得しています...';
+
         const profile = await liff.getProfile();
+
+        result.innerHTML = `
+          <strong>LINEプロフィール取得OK</strong><br>
+          表示名：${escapeHtml(profile.displayName)}<br>
+          <span class="small">LINEユーザーID取得済み</span><br><br>
+          予約DBへ登録確認中...
+        `;
+
+        const response = await jsonp(API_URL, {
+          action: 'syncCustomer',
+          lineUserId: profile.userId,
+          lineDisplayName: profile.displayName
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        const customer = response.customer || {};
 
         result.className = 'status';
         result.innerHTML = `
-          <strong>LIFF起動成功</strong><br>
-          表示名：${escapeHtml(profile.displayName)}<br>
-          LINEユーザーID：<br>
-          <pre>${escapeHtml(profile.userId)}</pre>
-          現在URL：<br>
-          <pre>${escapeHtml(location.href)}</pre>
+          <strong>DB接続成功</strong><br><br>
+          処理：${escapeHtml(response.mode)}<br>
+          顧客ID：${escapeHtml(customer.customer_id)}<br>
+          LINE表示名：${escapeHtml(customer.line_display_name)}<br>
+          会員種別：${escapeHtml(customer.member_type)}<br>
+          状態：${escapeHtml(customer.status)}<br><br>
+          <strong>次の段階</strong><br>
+          初回登録画面を作り、氏名・LINE名・電話番号・車両情報を登録できるようにします。
         `;
 
       } catch (error) {
@@ -106,8 +160,53 @@ UA: ${escapeHtml(navigator.userAgent)}</pre>
       }
     }
 
+    function jsonp(url, params) {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          'jsonpCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+
+        params.callback = callbackName;
+
+        const query = Object.keys(params)
+          .map(key => encodeURIComponent(key) + '=' + encodeURIComponent(params[key]))
+          .join('&');
+
+        const script = document.createElement('script');
+        script.src = url + '?' + query;
+
+        window[callbackName] = function(data) {
+          cleanup();
+          resolve(data);
+        };
+
+        script.onerror = function() {
+          cleanup();
+          reject(new Error('Apps Script APIの呼び出しに失敗しました。'));
+        };
+
+        function cleanup() {
+          try {
+            delete window[callbackName];
+          } catch (e) {
+            window[callbackName] = undefined;
+          }
+
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        }
+
+        setTimeout(() => {
+          cleanup();
+          reject(new Error('Apps Script APIの応答がタイムアウトしました。'));
+        }, 15000);
+
+        document.body.appendChild(script);
+      });
+    }
+
     function escapeHtml(str) {
-      return String(str)
+      return String(str ?? '')
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')
