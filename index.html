@@ -28,6 +28,12 @@
       margin-top: 0;
     }
 
+    h2 {
+      font-size: 18px;
+      margin-top: 24px;
+      margin-bottom: 8px;
+    }
+
     p {
       line-height: 1.6;
     }
@@ -52,10 +58,33 @@
       color: #5a3b00;
     }
 
+    label {
+      display: block;
+      margin-top: 14px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      margin-top: 6px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 16px;
+      background: #fff;
+    }
+
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
     button {
       width: 100%;
       padding: 14px;
-      margin-top: 16px;
+      margin-top: 18px;
       border: none;
       border-radius: 8px;
       background: #00b900;
@@ -64,100 +93,236 @@
       font-weight: bold;
     }
 
-    pre {
-      white-space: pre-wrap;
-      font-size: 12px;
-      line-height: 1.5;
+    button.secondary {
+      background: #444;
+    }
+
+    .vehicle-card {
+      padding: 12px;
+      background: #f3f6f6;
+      border-radius: 8px;
+      margin-top: 10px;
+      line-height: 1.7;
     }
 
     .small {
       font-size: 12px;
       color: #666;
     }
+
+    pre {
+      white-space: pre-wrap;
+      font-size: 12px;
+    }
   </style>
 </head>
 
 <body>
   <div class="card">
-    <h1>eFactory予約テスト</h1>
-    <p>LINEユーザー情報を予約DBへ登録するテストです。</p>
+    <h1>eFactory予約</h1>
+    <p>LINEアカウントと予約情報を連携します。</p>
 
-    <div id="result" class="status">
+    <div id="app" class="status">
       起動中です...
     </div>
-
-    <button onclick="location.reload()">再読み込み</button>
   </div>
 
   <script>
     const LIFF_ID = '2010526723-NFUasgWN';
-
     const API_URL = 'https://script.google.com/macros/s/AKfycbzwogK43RNJA29ujZsdadNXDHFuDk4envDHyQxyTNY5KhcyfyHGTTdybUV-jipnIxxBVA/exec';
 
-    const result = document.getElementById('result');
+    const app = document.getElementById('app');
+
+    let lineProfile = null;
+    let currentCustomer = null;
+    let currentVehicles = [];
 
     async function main() {
       try {
-        result.innerHTML = 'LIFF SDKを確認中...';
+        app.className = 'status';
+        app.innerHTML = 'LIFF SDKを確認中...';
 
         if (typeof liff === 'undefined') {
-          throw new Error('LIFF SDKが読み込めていません。通信環境を確認してください。');
+          throw new Error('LIFF SDKが読み込めていません。');
         }
 
-        result.innerHTML = 'LIFFを初期化しています...';
+        app.innerHTML = 'LIFFを初期化しています...';
 
         await liff.init({ liffId: LIFF_ID });
 
         if (!liff.isLoggedIn()) {
-          result.innerHTML = 'LINEログインへ移動します...';
+          app.innerHTML = 'LINEログインへ移動します...';
           liff.login();
           return;
         }
 
-        result.innerHTML = 'LINEプロフィールを取得しています...';
+        app.innerHTML = 'LINEプロフィールを取得しています...';
 
-        const profile = await liff.getProfile();
+        lineProfile = await liff.getProfile();
 
-        result.innerHTML = `
-          <strong>LINEプロフィール取得OK</strong><br>
-          表示名：${escapeHtml(profile.displayName)}<br>
-          <span class="small">LINEユーザーID取得済み</span><br><br>
-          予約DBへ登録確認中...
-        `;
+        app.innerHTML = '予約DBと同期しています...';
 
         const response = await jsonp(API_URL, {
           action: 'syncCustomer',
-          lineUserId: profile.userId,
-          lineDisplayName: profile.displayName
+          lineUserId: lineProfile.userId,
+          lineDisplayName: lineProfile.displayName
         });
 
         if (!response.ok) {
           throw new Error(JSON.stringify(response, null, 2));
         }
 
-        const customer = response.customer || {};
+        currentCustomer = response.customer;
+        currentVehicles = response.vehicles || [];
 
-        result.className = 'status';
-        result.innerHTML = `
-          <strong>DB接続成功</strong><br><br>
-          処理：${escapeHtml(response.mode)}<br>
-          顧客ID：${escapeHtml(customer.customer_id)}<br>
-          LINE表示名：${escapeHtml(customer.line_display_name)}<br>
-          会員種別：${escapeHtml(customer.member_type)}<br>
-          状態：${escapeHtml(customer.status)}<br><br>
-          <strong>次の段階</strong><br>
-          初回登録画面を作り、氏名・LINE名・電話番号・車両情報を登録できるようにします。
-        `;
+        if (needsInitialRegistration(currentCustomer, currentVehicles)) {
+          renderInitialForm();
+        } else {
+          renderHome();
+        }
 
       } catch (error) {
-        result.className = 'status error';
-        result.innerHTML = `
-          <strong>エラー</strong>
-          <pre>${escapeHtml(String(error))}
-URL: ${escapeHtml(location.href)}
-UA: ${escapeHtml(navigator.userAgent)}</pre>
-        `;
+        renderError(error);
       }
+    }
+
+    function needsInitialRegistration(customer, vehicles) {
+      if (!customer) return true;
+      if (customer.status === '仮登録') return true;
+      if (!customer.name) return true;
+      if (!vehicles || vehicles.length === 0) return true;
+      return false;
+    }
+
+    function renderInitialForm() {
+      app.className = 'status warning';
+      app.innerHTML = `
+        <strong>初回登録</strong><br>
+        初回のみ、お客様情報と車両情報を登録してください。<br>
+        次回以降は入力を省略できます。
+
+        <h2>お客様情報</h2>
+
+        <label>氏名 必須</label>
+        <input id="name" type="text" placeholder="例：山田 太郎" value="${escapeAttr(currentCustomer.name || '')}">
+
+        <label>LINE名</label>
+        <input id="lineName" type="text" placeholder="LINE上の表示名など" value="${escapeAttr(currentCustomer.line_name || lineProfile.displayName || '')}">
+
+        <label>電話番号</label>
+        <input id="phone" type="tel" placeholder="例：090-0000-0000" value="${escapeAttr(currentCustomer.phone || '')}">
+
+        <label>メールアドレス</label>
+        <input id="email" type="email" placeholder="例：example@example.com" value="${escapeAttr(currentCustomer.email || '')}">
+
+        <h2>車両情報</h2>
+
+        <label>メーカー</label>
+        <input id="maker" type="text" placeholder="例：スズキ、ホンダ、ヤマハ">
+
+        <label>車種 必須</label>
+        <input id="model" type="text" placeholder="例：GSX-S1000、GROM、MT-09">
+
+        <label>年式</label>
+        <input id="year" type="text" placeholder="例：2020">
+
+        <label>型式</label>
+        <input id="typeCode" type="text" placeholder="例：2BL-GT79B">
+
+        <label>車両メモ</label>
+        <textarea id="vehicleNote" placeholder="改造内容、気になる症状、用途など"></textarea>
+
+        <button onclick="saveInitialProfile()">登録する</button>
+      `;
+    }
+
+    async function saveInitialProfile() {
+      try {
+        const name = getValue('name');
+        const lineName = getValue('lineName');
+        const phone = getValue('phone');
+        const email = getValue('email');
+
+        const maker = getValue('maker');
+        const model = getValue('model');
+        const year = getValue('year');
+        const typeCode = getValue('typeCode');
+        const vehicleNote = getValue('vehicleNote');
+
+        if (!name) {
+          alert('氏名を入力してください。');
+          return;
+        }
+
+        if (!model) {
+          alert('車種を入力してください。');
+          return;
+        }
+
+        app.className = 'status';
+        app.innerHTML = '登録しています...';
+
+        const response = await jsonp(API_URL, {
+          action: 'saveInitialProfile',
+          lineUserId: lineProfile.userId,
+          name,
+          lineName,
+          phone,
+          email,
+          maker,
+          model,
+          year,
+          typeCode,
+          vehicleNote
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        currentCustomer = response.customer;
+        currentVehicles = response.vehicles || [];
+
+        renderHome();
+
+      } catch (error) {
+        renderError(error);
+      }
+    }
+
+    function renderHome() {
+      app.className = 'status';
+      const vehiclesHtml = currentVehicles.length
+        ? currentVehicles.map(v => `
+            <div class="vehicle-card">
+              <strong>${escapeHtml(v.vehicle_nickname || v.model || '登録車両')}</strong><br>
+              メーカー：${escapeHtml(v.maker || '')}<br>
+              車種：${escapeHtml(v.model || '')}<br>
+              年式：${escapeHtml(v.year || '')}<br>
+              型式：${escapeHtml(v.type_code || '')}
+            </div>
+          `).join('')
+        : '<p>登録車両がありません。</p>';
+
+      app.innerHTML = `
+        <strong>登録済みです</strong><br><br>
+        顧客ID：${escapeHtml(currentCustomer.customer_id)}<br>
+        氏名：${escapeHtml(currentCustomer.name)}<br>
+        LINE表示名：${escapeHtml(currentCustomer.line_display_name)}<br>
+        会員種別：${escapeHtml(currentCustomer.member_type)}<br>
+        状態：${escapeHtml(currentCustomer.status)}<br>
+
+        <h2>登録車両</h2>
+        ${vehiclesHtml}
+
+        <button onclick="alert('次の工程で、空き枠カレンダーを作成します。')">空き枠を見る</button>
+        <button class="secondary" onclick="location.reload()">再読み込み</button>
+      `;
+    }
+
+    function getValue(id) {
+      const el = document.getElementById(id);
+      return el ? el.value.trim() : '';
     }
 
     function jsonp(url, params) {
@@ -205,6 +370,17 @@ UA: ${escapeHtml(navigator.userAgent)}</pre>
       });
     }
 
+    function renderError(error) {
+      app.className = 'status error';
+      app.innerHTML = `
+        <strong>エラー</strong>
+        <pre>${escapeHtml(String(error))}
+URL: ${escapeHtml(location.href)}
+UA: ${escapeHtml(navigator.userAgent)}</pre>
+        <button onclick="location.reload()">再読み込み</button>
+      `;
+    }
+
     function escapeHtml(str) {
       return String(str ?? '')
         .replaceAll('&', '&amp;')
@@ -212,6 +388,10 @@ UA: ${escapeHtml(navigator.userAgent)}</pre>
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#039;');
+    }
+
+    function escapeAttr(str) {
+      return escapeHtml(str).replaceAll('`', '&#096;');
     }
 
     main();
