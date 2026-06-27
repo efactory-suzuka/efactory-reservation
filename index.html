@@ -77,7 +77,7 @@
     }
 
     textarea {
-      min-height: 80px;
+      min-height: 90px;
       resize: vertical;
     }
 
@@ -97,7 +97,20 @@
       background: #444;
     }
 
-    .vehicle-card {
+    button.slot {
+      background: #fff;
+      color: #222;
+      border: 1px solid #00b900;
+      margin-top: 8px;
+      text-align: left;
+    }
+
+    button.slot.selected {
+      background: #00b900;
+      color: #fff;
+    }
+
+    .vehicle-card, .date-card {
       padding: 12px;
       background: #f3f6f6;
       border-radius: 8px;
@@ -136,6 +149,12 @@
     let lineProfile = null;
     let currentCustomer = null;
     let currentVehicles = [];
+    let currentMenus = [];
+    let currentAvailableStarts = [];
+
+    let selectedVehicleId = '';
+    let selectedMenuId = '';
+    let selectedStartSlotId = '';
 
     async function main() {
       try {
@@ -315,9 +334,196 @@
         <h2>登録車両</h2>
         ${vehiclesHtml}
 
-        <button onclick="alert('次の工程で、空き枠カレンダーを作成します。')">空き枠を見る</button>
+        <button onclick="showBooking()">空き枠を見て仮予約する</button>
         <button class="secondary" onclick="location.reload()">再読み込み</button>
       `;
+    }
+
+    async function showBooking(menuId) {
+      try {
+        app.className = 'status';
+        app.innerHTML = '空き枠を取得しています...';
+
+        const response = await jsonp(API_URL, {
+          action: 'getBookingData',
+          lineUserId: lineProfile.userId,
+          menuId: menuId || selectedMenuId || ''
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        currentCustomer = response.customer;
+        currentVehicles = response.vehicles || [];
+        currentMenus = response.menus || [];
+        currentAvailableStarts = response.availableStarts || [];
+
+        selectedMenuId = response.selectedMenuId || (currentMenus[0] ? currentMenus[0].menu_id : '');
+        selectedVehicleId = selectedVehicleId || (currentVehicles[0] ? currentVehicles[0].vehicle_id : '');
+        selectedStartSlotId = '';
+
+        renderBookingForm();
+
+      } catch (error) {
+        renderError(error);
+      }
+    }
+
+    function renderBookingForm() {
+      const vehicleOptions = currentVehicles.map(v => `
+        <option value="${escapeAttr(v.vehicle_id)}" ${v.vehicle_id === selectedVehicleId ? 'selected' : ''}>
+          ${escapeHtml(v.vehicle_nickname || v.model || v.vehicle_id)}
+        </option>
+      `).join('');
+
+      const menuOptions = currentMenus.map(m => `
+        <option value="${escapeAttr(m.menu_id)}" ${m.menu_id === selectedMenuId ? 'selected' : ''}>
+          ${escapeHtml(m.menu_name)}
+        </option>
+      `).join('');
+
+      const slotsHtml = renderSlotsHtml(currentAvailableStarts);
+
+      app.className = 'status';
+      app.innerHTML = `
+        <strong>仮予約申込</strong><br>
+        空き枠を選んで仮予約してください。<br>
+        作業内容確認後、eFactory側で承認して予約確定となります。
+
+        <label>車両</label>
+        <select id="vehicleId" onchange="selectedVehicleId=this.value">
+          ${vehicleOptions}
+        </select>
+
+        <label>メニュー</label>
+        <select id="menuId" onchange="changeMenu(this.value)">
+          ${menuOptions}
+        </select>
+
+        <h2>空き枠</h2>
+        ${slotsHtml}
+
+        <label>作業内容 必須</label>
+        <textarea id="workDetail" placeholder="例：ブレーキフルード交換を一緒にやりたい。持込フルードあり。"></textarea>
+
+        <label>持込部品</label>
+        <select id="partsBrought">
+          <option value="なし">なし</option>
+          <option value="あり">あり</option>
+          <option value="未定">未定</option>
+        </select>
+
+        <label>補足・要望</label>
+        <textarea id="customerMessage" placeholder="不安な点、事前に伝えたいことがあれば入力してください。"></textarea>
+
+        <button onclick="submitReservation()">仮予約する</button>
+        <button class="secondary" onclick="renderHome()">戻る</button>
+      `;
+    }
+
+    function renderSlotsHtml(slots) {
+      if (!slots || slots.length === 0) {
+        return `
+          <div class="date-card">
+            現在、このメニューで選択可能な空き枠がありません。
+          </div>
+        `;
+      }
+
+      const groups = {};
+      slots.forEach(s => {
+        const key = `${s.date}（${s.weekday_jp}）`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(s);
+      });
+
+      return Object.keys(groups).slice(0, 14).map(dateLabel => {
+        const buttons = groups[dateLabel].map(s => `
+          <button class="slot" id="slot-${escapeAttr(s.start_slot_id)}" onclick="selectSlot('${escapeAttr(s.start_slot_id)}')">
+            ${escapeHtml(s.start_time)}〜${escapeHtml(s.end_time)}
+          </button>
+        `).join('');
+
+        return `
+          <div class="date-card">
+            <strong>${escapeHtml(dateLabel)}</strong>
+            ${buttons}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function selectSlot(slotId) {
+      selectedStartSlotId = slotId;
+
+      document.querySelectorAll('button.slot').forEach(btn => {
+        btn.classList.remove('selected');
+      });
+
+      const btn = document.getElementById('slot-' + slotId);
+      if (btn) btn.classList.add('selected');
+    }
+
+    function changeMenu(menuId) {
+      selectedMenuId = menuId;
+      showBooking(menuId);
+    }
+
+    async function submitReservation() {
+      try {
+        const vehicleId = document.getElementById('vehicleId').value;
+        const menuId = document.getElementById('menuId').value;
+        const workDetail = getValue('workDetail');
+        const partsBrought = getValue('partsBrought');
+        const customerMessage = getValue('customerMessage');
+
+        if (!selectedStartSlotId) {
+          alert('空き枠を選択してください。');
+          return;
+        }
+
+        if (!workDetail) {
+          alert('作業内容を入力してください。');
+          return;
+        }
+
+        app.className = 'status';
+        app.innerHTML = '仮予約を登録しています...';
+
+        const response = await jsonp(API_URL, {
+          action: 'createReservation',
+          lineUserId: lineProfile.userId,
+          vehicleId,
+          menuId,
+          startSlotId: selectedStartSlotId,
+          workDetail,
+          partsBrought,
+          customerMessage
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        const r = response.reservation;
+
+        app.className = 'status';
+        app.innerHTML = `
+          <strong>仮予約を受け付けました</strong><br><br>
+          予約ID：${escapeHtml(r.reservation_id)}<br>
+          日時：${escapeHtml(r.date)} ${escapeHtml(r.start_time)}〜${escapeHtml(r.end_time)}<br>
+          状態：${escapeHtml(r.status)}<br><br>
+          この時点ではまだ予約確定ではありません。<br>
+          作業内容・車両状態・持込部品を確認後、eFactory側で承認して予約確定となります。
+
+          <button onclick="showBooking()">別の仮予約をする</button>
+          <button class="secondary" onclick="renderHome()">ホームに戻る</button>
+        `;
+
+      } catch (error) {
+        renderError(error);
+      }
     }
 
     function getValue(id) {
