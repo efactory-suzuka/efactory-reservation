@@ -165,10 +165,12 @@
     let currentVehicles = [];
     let currentMenus = [];
     let currentAvailableStarts = [];
+    let currentAllowedSlotCounts = [];
     let currentIsAdmin = false;
 
     let selectedVehicleId = '';
     let selectedMenuId = '';
+    let selectedSlotCount = 1;
     let selectedStartSlotId = '';
 
     async function main() {
@@ -355,7 +357,7 @@
         顧客ID：${escapeHtml(currentCustomer.customer_id)}<br>
         氏名：${escapeHtml(currentCustomer.name)}<br>
         LINE表示名：${escapeHtml(currentCustomer.line_display_name)}<br>
-        会員種別：${escapeHtml(currentCustomer.member_type)}<br>
+        会員種別：${escapeHtml(currentCustomer.member_type || '非会員')}<br>
         状態：${escapeHtml(currentCustomer.status)}<br>
 
         <h2>登録車両</h2>
@@ -367,7 +369,7 @@
       `;
     }
 
-    async function showBooking(menuId) {
+    async function showBooking(menuId, slotCount) {
       try {
         app.className = 'status';
         app.innerHTML = '空き枠を取得しています...';
@@ -375,7 +377,8 @@
         const response = await jsonp(API_URL, {
           action: 'getBookingData',
           lineUserId: lineProfile.userId,
-          menuId: menuId || selectedMenuId || ''
+          menuId: menuId || selectedMenuId || '',
+          slotCount: slotCount || selectedSlotCount || ''
         });
 
         if (!response.ok) {
@@ -386,10 +389,12 @@
         currentVehicles = response.vehicles || [];
         currentMenus = response.menus || [];
         currentAvailableStarts = response.availableStarts || [];
+        currentAllowedSlotCounts = response.allowedSlotCounts || [];
         currentIsAdmin = !!response.isAdmin;
 
         selectedMenuId = response.selectedMenuId || (currentMenus[0] ? currentMenus[0].menu_id : '');
         selectedVehicleId = selectedVehicleId || (currentVehicles[0] ? currentVehicles[0].vehicle_id : '');
+        selectedSlotCount = Number(response.selectedSlotCount || selectedSlotCount || 1);
         selectedStartSlotId = '';
 
         renderBookingForm();
@@ -412,6 +417,12 @@
         </option>
       `).join('');
 
+      const slotCountOptions = currentAllowedSlotCounts.map(n => `
+        <option value="${escapeAttr(n)}" ${Number(n) === Number(selectedSlotCount) ? 'selected' : ''}>
+          ${escapeHtml(n)}枠（${escapeHtml(Number(n) * 90)}分）
+        </option>
+      `).join('');
+
       const slotsHtml = renderSlotsHtml(currentAvailableStarts);
 
       app.className = 'status';
@@ -429,6 +440,15 @@
         <select id="menuId" onchange="changeMenu(this.value)">
           ${menuOptions}
         </select>
+
+        <label>利用枠数</label>
+        <select id="slotCount" onchange="changeSlotCount(this.value)">
+          ${slotCountOptions}
+        </select>
+
+        <div class="small">
+          1枠は90分です。複数枠を選ぶと、同じ日の連続した空き枠だけが表示されます。
+        </div>
 
         <h2>空き枠</h2>
         ${slotsHtml}
@@ -455,7 +475,7 @@
       if (!slots || slots.length === 0) {
         return `
           <div class="date-card">
-            現在、このメニューで選択可能な空き枠がありません。
+            現在、この枠数で選択可能な空き枠がありません。
           </div>
         `;
       }
@@ -496,13 +516,19 @@
 
     function changeMenu(menuId) {
       selectedMenuId = menuId;
-      showBooking(menuId);
+      showBooking(menuId, selectedSlotCount);
+    }
+
+    function changeSlotCount(slotCount) {
+      selectedSlotCount = Number(slotCount || 1);
+      showBooking(selectedMenuId, selectedSlotCount);
     }
 
     async function submitReservation() {
       try {
         const vehicleId = document.getElementById('vehicleId').value;
         const menuId = document.getElementById('menuId').value;
+        const slotCount = document.getElementById('slotCount').value;
         const workDetail = getValue('workDetail');
         const partsBrought = getValue('partsBrought');
         const customerMessage = getValue('customerMessage');
@@ -526,6 +552,7 @@
           vehicleId,
           menuId,
           startSlotId: selectedStartSlotId,
+          slotCount,
           workDetail,
           partsBrought,
           customerMessage
@@ -542,9 +569,11 @@
           <strong>仮予約を受け付けました</strong><br><br>
           予約ID：${escapeHtml(r.reservation_id)}<br>
           日時：${escapeHtml(r.date)} ${escapeHtml(r.start_time)}〜${escapeHtml(r.end_time)}<br>
+          利用枠数：${escapeHtml(r.slot_count)}枠（${escapeHtml(r.duration_min)}分）<br>
           状態：${escapeHtml(r.status)}<br><br>
           この時点ではまだ予約確定ではありません。<br>
-          作業内容・車両状態・持込部品を確認後、eFactory側で承認して予約確定となります。
+          作業内容・車両状態・持込部品を確認後、eFactory側で承認して予約確定となります。<br><br>
+          LINEにも仮予約申請中のメッセージを送信しました。
 
           <button onclick="showBooking()">別の仮予約をする</button>
           <button class="secondary" onclick="renderHome()">ホームに戻る</button>
@@ -590,13 +619,17 @@
               <strong>${escapeHtml(r.date)}（${escapeHtml(r.weekday_jp)}） ${escapeHtml(r.start_time)}〜${escapeHtml(r.end_time)}</strong><br>
               予約ID：${escapeHtml(r.reservation_id)}<br>
               お客様：${escapeHtml(r.customer_name)} 様<br>
+              会員種別：${escapeHtml(r.member_type)}<br>
               車両：${escapeHtml(r.vehicle_name)}<br>
               メニュー：${escapeHtml(r.menu_name)}<br>
+              利用枠数：${escapeHtml(r.slot_count)}枠（${escapeHtml(r.duration_min)}分）<br>
+              確定ルール：${escapeHtml(formatPolicy(r.confirmation_policy))}<br>
               作業内容：${escapeHtml(r.work_detail)}<br>
               持込部品：${escapeHtml(r.parts_brought)}<br>
               補足：${escapeHtml(r.customer_message)}<br>
 
-              <button onclick="approveReservation('${escapeAttr(r.reservation_id)}')">承認してカレンダー登録</button>
+              <button onclick="approveReservation('${escapeAttr(r.reservation_id)}', 'close')">承認してこの枠を締め切る</button>
+              <button class="secondary" onclick="approveReservation('${escapeAttr(r.reservation_id)}', 'keep_open')">承認して追加受付可能にする</button>
               <button class="danger" onclick="rejectReservation('${escapeAttr(r.reservation_id)}')">却下して枠を戻す</button>
             </div>
           `).join('')
@@ -613,8 +646,12 @@
       `;
     }
 
-    async function approveReservation(reservationId) {
-      if (!confirm('この仮予約を承認して、Googleカレンダーに登録しますか？')) {
+    async function approveReservation(reservationId, slotHandling) {
+      const label = slotHandling === 'keep_open'
+        ? 'この予約を承認し、この時間帯を追加受付可能にしますか？'
+        : 'この予約を承認し、この時間帯を締め切りますか？';
+
+      if (!confirm(label)) {
         return;
       }
 
@@ -625,21 +662,31 @@
         const response = await jsonp(API_URL, {
           action: 'approveReservation',
           lineUserId: lineProfile.userId,
-          reservationId
+          reservationId,
+          slotHandling
         });
 
         if (!response.ok) {
           throw new Error(JSON.stringify(response, null, 2));
         }
 
+        const slotHandlingLabel = response.slot_handling === 'keep_open'
+          ? '追加受付可能'
+          : '締め切り';
+
         app.className = 'status';
         app.innerHTML = `
           <strong>承認しました</strong><br><br>
           予約ID：${escapeHtml(response.reservation_id)}<br>
           状態：${escapeHtml(response.status)}<br>
+          枠の扱い：${escapeHtml(slotHandlingLabel)}<br>
           Googleカレンダー登録：完了<br>
           開始：${escapeHtml(response.start)}<br>
           終了：${escapeHtml(response.end)}<br><br>
+          ${response.status === '確定'
+            ? 'プレミアム会員のため、予約確定LINE通知を送信しました。'
+            : '6日前確定対象のため、承認時点ではLINE通知は送信していません。'
+          }
 
           <button onclick="showAdminDashboard()">承認待ち一覧に戻る</button>
           <button class="secondary" onclick="renderHome()">ホームに戻る</button>
@@ -677,7 +724,8 @@
           <strong>却下しました</strong><br><br>
           予約ID：${escapeHtml(response.reservation_id)}<br>
           状態：${escapeHtml(response.status)}<br>
-          該当枠は空き枠に戻しました。<br><br>
+          該当枠は空き枠に戻しました。<br>
+          お客様にLINEで却下通知を送信しました。<br><br>
 
           <button onclick="showAdminDashboard()">承認待ち一覧に戻る</button>
           <button class="secondary" onclick="renderHome()">ホームに戻る</button>
@@ -686,6 +734,12 @@
       } catch (error) {
         renderError(error);
       }
+    }
+
+    function formatPolicy(policy) {
+      if (policy === 'immediate') return '承認後すぐ確定';
+      if (policy === 'six_days') return '6日前確定';
+      return policy || '';
     }
 
     function getValue(id) {
