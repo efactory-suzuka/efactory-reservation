@@ -97,6 +97,10 @@
       background: #444;
     }
 
+    button.danger {
+      background: #b00020;
+    }
+
     button.slot {
       background: #fff;
       color: #222;
@@ -116,6 +120,16 @@
       border-radius: 8px;
       margin-top: 10px;
       line-height: 1.7;
+    }
+
+    .admin-badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #222;
+      color: #fff;
+      font-size: 12px;
     }
 
     .small {
@@ -151,6 +165,7 @@
     let currentVehicles = [];
     let currentMenus = [];
     let currentAvailableStarts = [];
+    let currentIsAdmin = false;
 
     let selectedVehicleId = '';
     let selectedMenuId = '';
@@ -193,6 +208,7 @@
 
         currentCustomer = response.customer;
         currentVehicles = response.vehicles || [];
+        currentIsAdmin = !!response.isAdmin;
 
         if (needsInitialRegistration(currentCustomer, currentVehicles)) {
           renderInitialForm();
@@ -301,6 +317,7 @@
 
         currentCustomer = response.customer;
         currentVehicles = response.vehicles || [];
+        currentIsAdmin = !!response.isAdmin;
 
         renderHome();
 
@@ -311,6 +328,7 @@
 
     function renderHome() {
       app.className = 'status';
+
       const vehiclesHtml = currentVehicles.length
         ? currentVehicles.map(v => `
             <div class="vehicle-card">
@@ -323,8 +341,17 @@
           `).join('')
         : '<p>登録車両がありません。</p>';
 
+      const adminHtml = currentIsAdmin
+        ? `
+          <div class="admin-badge">管理者</div>
+          <button class="secondary" onclick="showAdminDashboard()">管理者画面</button>
+        `
+        : '';
+
       app.innerHTML = `
-        <strong>登録済みです</strong><br><br>
+        <strong>登録済みです</strong><br>
+        ${currentIsAdmin ? '<span class="admin-badge">管理者としてログイン中</span><br>' : ''}
+        <br>
         顧客ID：${escapeHtml(currentCustomer.customer_id)}<br>
         氏名：${escapeHtml(currentCustomer.name)}<br>
         LINE表示名：${escapeHtml(currentCustomer.line_display_name)}<br>
@@ -335,6 +362,7 @@
         ${vehiclesHtml}
 
         <button onclick="showBooking()">空き枠を見て仮予約する</button>
+        ${adminHtml}
         <button class="secondary" onclick="location.reload()">再読み込み</button>
       `;
     }
@@ -358,6 +386,7 @@
         currentVehicles = response.vehicles || [];
         currentMenus = response.menus || [];
         currentAvailableStarts = response.availableStarts || [];
+        currentIsAdmin = !!response.isAdmin;
 
         selectedMenuId = response.selectedMenuId || (currentMenus[0] ? currentMenus[0].menu_id : '');
         selectedVehicleId = selectedVehicleId || (currentVehicles[0] ? currentVehicles[0].vehicle_id : '');
@@ -518,6 +547,139 @@
           作業内容・車両状態・持込部品を確認後、eFactory側で承認して予約確定となります。
 
           <button onclick="showBooking()">別の仮予約をする</button>
+          <button class="secondary" onclick="renderHome()">ホームに戻る</button>
+        `;
+
+      } catch (error) {
+        renderError(error);
+      }
+    }
+
+    async function showAdminDashboard() {
+      if (!currentIsAdmin) {
+        renderError(new Error('管理者権限がありません。'));
+        return;
+      }
+
+      try {
+        app.className = 'status';
+        app.innerHTML = '管理者情報を取得しています...';
+
+        const response = await jsonp(API_URL, {
+          action: 'getAdminDashboard',
+          lineUserId: lineProfile.userId
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        renderAdminDashboard(response.pending || []);
+
+      } catch (error) {
+        renderError(error);
+      }
+    }
+
+    function renderAdminDashboard(pending) {
+      app.className = 'status';
+
+      const pendingHtml = pending.length
+        ? pending.map(r => `
+            <div class="date-card">
+              <strong>${escapeHtml(r.date)}（${escapeHtml(r.weekday_jp)}） ${escapeHtml(r.start_time)}〜${escapeHtml(r.end_time)}</strong><br>
+              予約ID：${escapeHtml(r.reservation_id)}<br>
+              お客様：${escapeHtml(r.customer_name)} 様<br>
+              車両：${escapeHtml(r.vehicle_name)}<br>
+              メニュー：${escapeHtml(r.menu_name)}<br>
+              作業内容：${escapeHtml(r.work_detail)}<br>
+              持込部品：${escapeHtml(r.parts_brought)}<br>
+              補足：${escapeHtml(r.customer_message)}<br>
+
+              <button onclick="approveReservation('${escapeAttr(r.reservation_id)}')">承認してカレンダー登録</button>
+              <button class="danger" onclick="rejectReservation('${escapeAttr(r.reservation_id)}')">却下して枠を戻す</button>
+            </div>
+          `).join('')
+        : '<div class="date-card">承認待ちの仮予約はありません。</div>';
+
+      app.innerHTML = `
+        <strong>管理者画面</strong><br>
+        承認待ちの仮予約一覧です。
+
+        <h2>承認待ち</h2>
+        ${pendingHtml}
+
+        <button class="secondary" onclick="renderHome()">ホームに戻る</button>
+      `;
+    }
+
+    async function approveReservation(reservationId) {
+      if (!confirm('この仮予約を承認して、Googleカレンダーに登録しますか？')) {
+        return;
+      }
+
+      try {
+        app.className = 'status';
+        app.innerHTML = '承認処理中です...';
+
+        const response = await jsonp(API_URL, {
+          action: 'approveReservation',
+          lineUserId: lineProfile.userId,
+          reservationId
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        app.className = 'status';
+        app.innerHTML = `
+          <strong>承認しました</strong><br><br>
+          予約ID：${escapeHtml(response.reservation_id)}<br>
+          状態：${escapeHtml(response.status)}<br>
+          Googleカレンダー登録：完了<br>
+          開始：${escapeHtml(response.start)}<br>
+          終了：${escapeHtml(response.end)}<br><br>
+
+          <button onclick="showAdminDashboard()">承認待ち一覧に戻る</button>
+          <button class="secondary" onclick="renderHome()">ホームに戻る</button>
+        `;
+
+      } catch (error) {
+        renderError(error);
+      }
+    }
+
+    async function rejectReservation(reservationId) {
+      const reason = prompt('却下理由やメモを入力してください。空欄でも可。', '');
+
+      if (reason === null) {
+        return;
+      }
+
+      try {
+        app.className = 'status';
+        app.innerHTML = '却下処理中です...';
+
+        const response = await jsonp(API_URL, {
+          action: 'rejectReservation',
+          lineUserId: lineProfile.userId,
+          reservationId,
+          reason
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        app.className = 'status';
+        app.innerHTML = `
+          <strong>却下しました</strong><br><br>
+          予約ID：${escapeHtml(response.reservation_id)}<br>
+          状態：${escapeHtml(response.status)}<br>
+          該当枠は空き枠に戻しました。<br><br>
+
+          <button onclick="showAdminDashboard()">承認待ち一覧に戻る</button>
           <button class="secondary" onclick="renderHome()">ホームに戻る</button>
         `;
 
