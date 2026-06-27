@@ -353,7 +353,12 @@
               メーカー：${escapeHtml(v.maker || '')}<br>
               車種：${escapeHtml(v.model || '')}<br>
               年式：${escapeHtml(v.year || '')}<br>
-              型式：${escapeHtml(v.type_code || '')}
+              型式：${escapeHtml(v.type_code || '')}<br>
+              排気量：${escapeHtml(v.displacement || '')}<br>
+              用途：${escapeHtml(v.usage || '')}<br>
+              メモ：${escapeHtml(v.note || '')}<br>
+
+              <button class="secondary" onclick="showVehicleForm('${escapeAttr(v.vehicle_id)}')">車両情報を修正する</button>
             </div>
           `).join('')
         : '<p>登録車両がありません。</p>';
@@ -378,12 +383,154 @@
         <h2>登録車両</h2>
         ${vehiclesHtml}
 
+        <button class="secondary" onclick="showVehicleForm()">車両を追加する</button>
         <button onclick="showBooking()">空き枠を見て仮予約する</button>
         ${adminHtml}
         <button class="secondary" onclick="location.reload()">再読み込み</button>
       `;
     }
 
+    function showVehicleForm(vehicleId) {
+      const vehicle = vehicleId
+        ? currentVehicles.find(v => String(v.vehicle_id) === String(vehicleId))
+        : null;
+
+      const isEdit = !!vehicle;
+
+      app.className = 'status';
+      app.innerHTML = `
+        <strong>${isEdit ? '車両情報を修正' : '車両を追加'}</strong><br>
+        ${isEdit ? '登録済みの車両情報を修正します。' : '2台目以降の車両を追加できます。'}
+
+        <input id="vehicleId" type="hidden" value="${escapeAttr(vehicle ? vehicle.vehicle_id : '')}">
+
+        <label>車両名・呼び名</label>
+        <input id="vehicleNickname" type="text" placeholder="例：メイン車両、GROM、GSX-S1000" value="${escapeAttr(vehicle ? vehicle.vehicle_nickname || '' : '')}">
+
+        <label>メーカー</label>
+        <input id="vehicleMaker" type="text" placeholder="例：ホンダ、ヤマハ、スズキ" value="${escapeAttr(vehicle ? vehicle.maker || '' : '')}">
+
+        <label>車種 必須</label>
+        <input id="vehicleModel" type="text" placeholder="例：GROM、MT-09、GSX-S1000" value="${escapeAttr(vehicle ? vehicle.model || '' : '')}">
+
+        <label>年式</label>
+        <input id="vehicleYear" type="text" placeholder="例：2021" value="${escapeAttr(vehicle ? vehicle.year || '' : '')}">
+
+        <label>型式</label>
+        <input id="vehicleTypeCode" type="text" placeholder="例：JC92、2BL-GT79B" value="${escapeAttr(vehicle ? vehicle.type_code || '' : '')}">
+
+        <label>排気量</label>
+        <input id="vehicleDisplacement" type="text" placeholder="例：125、1000" value="${escapeAttr(vehicle ? vehicle.displacement || '' : '')}">
+
+        <label>用途</label>
+        <input id="vehicleUsage" type="text" placeholder="例：街乗り、ツーリング、ジムカーナ、サーキット" value="${escapeAttr(vehicle ? vehicle.usage || '' : '')}">
+
+        <label>メモ</label>
+        <textarea id="vehicleNote" placeholder="改造内容、気になる症状、今後やりたい作業など">${escapeHtml(vehicle ? vehicle.note || '' : '')}</textarea>
+
+        <button onclick="saveVehicle()">保存する</button>
+        ${isEdit ? '<button class="danger" onclick="deactivateVehicle()">この車両を非表示にする</button>' : ''}
+        <button class="secondary" onclick="renderHome()">戻る</button>
+      `;
+    }
+
+    async function saveVehicle() {
+      try {
+        const vehicleId = getValue('vehicleId');
+        const vehicleNickname = getValue('vehicleNickname');
+        const maker = getValue('vehicleMaker');
+        const model = getValue('vehicleModel');
+        const year = getValue('vehicleYear');
+        const typeCode = getValue('vehicleTypeCode');
+        const displacement = getValue('vehicleDisplacement');
+        const usage = getValue('vehicleUsage');
+        const note = getValue('vehicleNote');
+
+        if (!model) {
+          alert('車種を入力してください。');
+          return;
+        }
+
+        app.className = 'status';
+        app.innerHTML = '車両情報を保存しています...';
+
+        const response = await jsonp(API_URL, {
+          action: 'saveVehicle',
+          lineUserId: lineProfile.userId,
+          vehicleId,
+          vehicleNickname,
+          maker,
+          model,
+          year,
+          typeCode,
+          displacement,
+          usage,
+          note
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        currentVehicles = response.vehicles || [];
+
+        app.className = 'status';
+        app.innerHTML = `
+          <strong>車両情報を保存しました</strong><br><br>
+          ${response.mode === 'created' ? '新しい車両を追加しました。' : '車両情報を更新しました。'}
+
+          <button onclick="renderHome()">ホームに戻る</button>
+          <button class="secondary" onclick="showVehicleForm()">別の車両を追加する</button>
+        `;
+
+      } catch (error) {
+        renderError(error);
+      }
+    }
+
+    async function deactivateVehicle() {
+      try {
+        const vehicleId = getValue('vehicleId');
+
+        if (!vehicleId) {
+          alert('対象車両が見つかりません。');
+          return;
+        }
+
+        if (!confirm('この車両を非表示にしますか？\n過去の予約履歴には残りますが、今後の予約画面には表示されなくなります。')) {
+          return;
+        }
+
+        app.className = 'status';
+        app.innerHTML = '車両を非表示にしています...';
+
+        const response = await jsonp(API_URL, {
+          action: 'deactivateVehicle',
+          lineUserId: lineProfile.userId,
+          vehicleId
+        });
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(response, null, 2));
+        }
+
+        currentVehicles = response.vehicles || [];
+
+        app.className = 'status';
+        app.innerHTML = `
+          <strong>車両を非表示にしました</strong><br><br>
+          この車両は今後の予約画面には表示されません。<br>
+          過去の予約履歴には残ります。
+
+          <button onclick="renderHome()">ホームに戻る</button>
+        `;
+
+      } catch (error) {
+        renderError(error);
+      }
+    }
+
+      
     async function showBooking(menuId) {
       try {
         app.className = 'status';
