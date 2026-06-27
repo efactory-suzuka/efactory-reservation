@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>eFactory予約</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f7f7f7;
+      color: #222;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .status {
+      margin-top: 16px;
+      padding: 12px;
+      background: #eef7f4;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.7;
+      word-break: break-all;
+    }
+    .error {
+      background: #fff0f0;
+      color: #b00020;
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 16px;
+      border: none;
+      border-radius: 8px;
+      background: #00b900;
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    pre {
+      white-space: pre-wrap;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>eFactory予約テスト</h1>
+    <p>LIFF起動確認です。</p>
+
+    <div id="result" class="status">
+      起動中です...
+    </div>
+
+    <button onclick="location.reload()">再読み込み</button>
+  </div>
+
+  <script>
+    const LIFF_ID = '2010526723-NFUasgWN';
+    const result = document.getElementById('result');
+
+    async function main() {
+      try {
+        result.innerHTML = 'LIFF SDKを確認中...';
+
+        if (typeof liff === 'undefined') {
+          throw new Error('LIFF SDKが読み込めていません。');
+        }
+
+        result.innerHTML = 'LIFFを初期化しています...';
+
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          result.innerHTML = 'LINEログインへ移動します...';
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+
+        result.className = 'status';
+        result.innerHTML = `
+          <strong>LIFF起動成功</strong><br>
+          表示名：${escapeHtml(profile.displayName)}<br>
+          LINEユーザーID：<br>
+          <pre>${escapeHtml(profile.userId)}</pre>
+          現在URL：<br>
+          <pre>${escapeHtml(location.href)}</pre>
+        `;
+
+      } catch (error) {
+        result.className = 'status error';
+        result.innerHTML = `
+          <strong>エラー</strong>
+          <pre>${escapeHtml(String(error))}
+URL: ${escapeHtml(location.href)}
+UA: ${escapeHtml(navigator.userAgent)}</pre>
+        `;
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    main();
+  </script>
+</body>
+</html>
