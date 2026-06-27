@@ -114,6 +114,12 @@
       color: #fff;
     }
 
+    button.slot.disabled {
+      background: #eee;
+      color: #aaa;
+      border: 1px solid #ddd;
+    }
+
     .vehicle-card, .date-card {
       padding: 12px;
       background: #f3f6f6;
@@ -130,6 +136,14 @@
       background: #222;
       color: #fff;
       font-size: 12px;
+    }
+
+    .selected-box {
+      margin-top: 14px;
+      padding: 12px;
+      background: #e8f7e8;
+      border-radius: 8px;
+      line-height: 1.7;
     }
 
     .small {
@@ -164,14 +178,15 @@
     let currentCustomer = null;
     let currentVehicles = [];
     let currentMenus = [];
-    let currentAvailableStarts = [];
+    let currentOpenSlots = [];
     let currentAllowedSlotCounts = [];
+    let currentMaxSlotCount = 5;
     let currentIsAdmin = false;
 
     let selectedVehicleId = '';
     let selectedMenuId = '';
-    let selectedSlotCount = 1;
-    let selectedStartSlotId = '';
+    let selectedSlotIds = [];
+    let selectedSlotDate = '';
 
     async function main() {
       try {
@@ -369,7 +384,7 @@
       `;
     }
 
-    async function showBooking(menuId, slotCount) {
+    async function showBooking(menuId) {
       try {
         app.className = 'status';
         app.innerHTML = '空き枠を取得しています...';
@@ -377,8 +392,7 @@
         const response = await jsonp(API_URL, {
           action: 'getBookingData',
           lineUserId: lineProfile.userId,
-          menuId: menuId || selectedMenuId || '',
-          slotCount: slotCount || selectedSlotCount || ''
+          menuId: menuId || selectedMenuId || ''
         });
 
         if (!response.ok) {
@@ -388,14 +402,16 @@
         currentCustomer = response.customer;
         currentVehicles = response.vehicles || [];
         currentMenus = response.menus || [];
-        currentAvailableStarts = response.availableStarts || [];
-        currentAllowedSlotCounts = response.allowedSlotCounts || [];
+        currentOpenSlots = response.openSlots || [];
+        currentAllowedSlotCounts = response.allowedSlotCounts || [1,2,3,4,5];
+        currentMaxSlotCount = Number(response.maxSlotCount || 5);
         currentIsAdmin = !!response.isAdmin;
 
         selectedMenuId = response.selectedMenuId || (currentMenus[0] ? currentMenus[0].menu_id : '');
         selectedVehicleId = selectedVehicleId || (currentVehicles[0] ? currentVehicles[0].vehicle_id : '');
-        selectedSlotCount = Number(response.selectedSlotCount || selectedSlotCount || 1);
-        selectedStartSlotId = '';
+
+        selectedSlotIds = [];
+        selectedSlotDate = '';
 
         renderBookingForm();
 
@@ -417,13 +433,7 @@
         </option>
       `).join('');
 
-      const slotCountOptions = currentAllowedSlotCounts.map(n => `
-        <option value="${escapeAttr(n)}" ${Number(n) === Number(selectedSlotCount) ? 'selected' : ''}>
-          ${escapeHtml(n)}枠（${escapeHtml(Number(n) * 90)}分）
-        </option>
-      `).join('');
-
-      const slotsHtml = renderSlotsHtml(currentAvailableStarts);
+      const slotsHtml = renderSlotsHtml(currentOpenSlots);
 
       app.className = 'status';
       app.innerHTML = `
@@ -441,17 +451,17 @@
           ${menuOptions}
         </select>
 
-        <label>利用枠数</label>
-        <select id="slotCount" onchange="changeSlotCount(this.value)">
-          ${slotCountOptions}
-        </select>
-
+        <h2>空き枠</h2>
         <div class="small">
-          1枠は90分です。複数枠を選ぶと、同じ日の連続した空き枠だけが表示されます。
+          1枠は90分です。1〜${escapeHtml(currentMaxSlotCount)}枠まで選択できます。<br>
+          同じ日の枠だけ選択できます。選択済みの枠をもう一度押すと解除できます。
         </div>
 
-        <h2>空き枠</h2>
         ${slotsHtml}
+
+        <div id="selectedSummary" class="selected-box">
+          選択中：なし
+        </div>
 
         <label>作業内容 必須</label>
         <textarea id="workDetail" placeholder="例：ブレーキフルード交換を一緒にやりたい。持込フルードあり。"></textarea>
@@ -469,13 +479,15 @@
         <button onclick="submitReservation()">仮予約する</button>
         <button class="secondary" onclick="renderHome()">戻る</button>
       `;
+
+      updateSelectedSummary();
     }
 
     function renderSlotsHtml(slots) {
       if (!slots || slots.length === 0) {
         return `
           <div class="date-card">
-            現在、この枠数で選択可能な空き枠がありません。
+            現在、選択可能な空き枠がありません。
           </div>
         `;
       }
@@ -489,7 +501,7 @@
 
       return Object.keys(groups).slice(0, 14).map(dateLabel => {
         const buttons = groups[dateLabel].map(s => `
-          <button class="slot" id="slot-${escapeAttr(s.start_slot_id)}" onclick="selectSlot('${escapeAttr(s.start_slot_id)}')">
+          <button class="slot" id="slot-${escapeAttr(s.slot_id)}" onclick="toggleSlot('${escapeAttr(s.slot_id)}')">
             ${escapeHtml(s.start_time)}〜${escapeHtml(s.end_time)}
           </button>
         `).join('');
@@ -503,38 +515,108 @@
       }).join('');
     }
 
-    function selectSlot(slotId) {
-      selectedStartSlotId = slotId;
+    function toggleSlot(slotId) {
+      const slot = currentOpenSlots.find(s => s.slot_id === slotId);
+      if (!slot) return;
 
+      const alreadySelected = selectedSlotIds.includes(slotId);
+
+      if (alreadySelected) {
+        selectedSlotIds = selectedSlotIds.filter(id => id !== slotId);
+
+        if (selectedSlotIds.length === 0) {
+          selectedSlotDate = '';
+        }
+
+        updateSelectedSummary();
+        return;
+      }
+
+      if (selectedSlotIds.length >= currentMaxSlotCount) {
+        alert(`${currentMaxSlotCount}枠まで選択できます。`);
+        return;
+      }
+
+      if (selectedSlotDate && selectedSlotDate !== slot.date) {
+        alert('複数日にまたがる予約はできません。同じ日の枠を選択してください。');
+        return;
+      }
+
+      selectedSlotDate = slot.date;
+      selectedSlotIds.push(slotId);
+
+      selectedSlotIds.sort((a, b) => {
+        const sa = currentOpenSlots.find(s => s.slot_id === a);
+        const sb = currentOpenSlots.find(s => s.slot_id === b);
+        const ka = `${sa.date} ${sa.start_time}`;
+        const kb = `${sb.date} ${sb.start_time}`;
+        return ka.localeCompare(kb);
+      });
+
+      updateSelectedSummary();
+    }
+
+    function updateSelectedSummary() {
       document.querySelectorAll('button.slot').forEach(btn => {
         btn.classList.remove('selected');
       });
 
-      const btn = document.getElementById('slot-' + slotId);
-      if (btn) btn.classList.add('selected');
+      selectedSlotIds.forEach(id => {
+        const btn = document.getElementById('slot-' + id);
+        if (btn) btn.classList.add('selected');
+      });
+
+      const box = document.getElementById('selectedSummary');
+      if (!box) return;
+
+      if (selectedSlotIds.length === 0) {
+        box.innerHTML = '選択中：なし';
+        return;
+      }
+
+      const selectedSlots = selectedSlotIds
+        .map(id => currentOpenSlots.find(s => s.slot_id === id))
+        .filter(Boolean)
+        .sort((a, b) => `${a.date} ${a.start_time}`.localeCompare(`${b.date} ${b.start_time}`));
+
+      const dateLabel = selectedSlots.length
+        ? `${selectedSlots[0].date}（${selectedSlots[0].weekday_jp}）`
+        : '';
+
+      const slotLabels = selectedSlots
+        .map(s => `${s.start_time}〜${s.end_time}`)
+        .join('<br>');
+
+      const totalMin = selectedSlots.length * 90;
+
+      box.innerHTML = `
+        <strong>選択中</strong><br>
+        日付：${escapeHtml(dateLabel)}<br>
+        ${slotLabels}<br>
+        合計：${selectedSlots.length}枠 / ${totalMin}分
+      `;
     }
 
     function changeMenu(menuId) {
       selectedMenuId = menuId;
-      showBooking(menuId, selectedSlotCount);
-    }
-
-    function changeSlotCount(slotCount) {
-      selectedSlotCount = Number(slotCount || 1);
-      showBooking(selectedMenuId, selectedSlotCount);
+      showBooking(menuId);
     }
 
     async function submitReservation() {
       try {
         const vehicleId = document.getElementById('vehicleId').value;
         const menuId = document.getElementById('menuId').value;
-        const slotCount = document.getElementById('slotCount').value;
         const workDetail = getValue('workDetail');
         const partsBrought = getValue('partsBrought');
         const customerMessage = getValue('customerMessage');
 
-        if (!selectedStartSlotId) {
-          alert('空き枠を選択してください。');
+        if (!selectedSlotIds || selectedSlotIds.length === 0) {
+          alert('空き枠を1つ以上選択してください。');
+          return;
+        }
+
+        if (selectedSlotIds.length > currentMaxSlotCount) {
+          alert(`${currentMaxSlotCount}枠まで選択できます。`);
           return;
         }
 
@@ -551,8 +633,7 @@
           lineUserId: lineProfile.userId,
           vehicleId,
           menuId,
-          startSlotId: selectedStartSlotId,
-          slotCount,
+          slotIds: selectedSlotIds.join(','),
           workDetail,
           partsBrought,
           customerMessage
@@ -569,6 +650,7 @@
           <strong>仮予約を受け付けました</strong><br><br>
           予約ID：${escapeHtml(r.reservation_id)}<br>
           日時：${escapeHtml(r.date)} ${escapeHtml(r.start_time)}〜${escapeHtml(r.end_time)}<br>
+          選択枠：${escapeHtml(r.selected_slots_label || '')}<br>
           利用枠数：${escapeHtml(r.slot_count)}枠（${escapeHtml(r.duration_min)}分）<br>
           状態：${escapeHtml(r.status)}<br><br>
           この時点ではまだ予約確定ではありません。<br>
@@ -617,6 +699,7 @@
         ? pending.map(r => `
             <div class="date-card">
               <strong>${escapeHtml(r.date)}（${escapeHtml(r.weekday_jp)}） ${escapeHtml(r.start_time)}〜${escapeHtml(r.end_time)}</strong><br>
+              選択枠：${escapeHtml(r.selected_slots_label || '')}<br>
               予約ID：${escapeHtml(r.reservation_id)}<br>
               お客様：${escapeHtml(r.customer_name)} 様<br>
               会員種別：${escapeHtml(r.member_type)}<br>
@@ -680,6 +763,7 @@
           予約ID：${escapeHtml(response.reservation_id)}<br>
           状態：${escapeHtml(response.status)}<br>
           枠の扱い：${escapeHtml(slotHandlingLabel)}<br>
+          選択枠：${escapeHtml(response.selected_slots_label || '')}<br>
           Googleカレンダー登録：完了<br>
           開始：${escapeHtml(response.start)}<br>
           終了：${escapeHtml(response.end)}<br><br>
