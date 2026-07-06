@@ -646,7 +646,7 @@
         groups[key].push(s);
       });
 
-      return Object.keys(groups).slice(0, 14).map(dateLabel => {
+      return Object.keys(groups).map(dateLabel => {
         const buttons = groups[dateLabel].map(s => `
           <button class="slot" id="slot-${escapeAttr(s.slot_id)}" onclick="toggleSlot('${escapeAttr(s.slot_id)}')">
             ${escapeHtml(s.start_time)}〜${escapeHtml(s.end_time)}
