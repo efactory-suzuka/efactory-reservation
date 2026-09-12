@@ -389,25 +389,19 @@
       app.innerHTML = `
         <strong>登録済みです</strong><br>
         ${currentIsAdmin ? '<span class="admin-badge">管理者としてログイン中</span><br>' : ''}
+        <div class="small">
+          会員種別：${escapeHtml(currentCustomer.member_type || '非会員')} / 状態：${escapeHtml(currentCustomer.status)}
+        </div>
 
         <h2>予約可能日</h2>
         <div id="homeCalendar" class="date-card">月間カレンダーを取得しています...</div>
 
-        <h2>選択日の空き枠</h2>
-        <div id="homeDayAvailability" class="date-card">日付を選択してください。</div>
-
-        <div id="homeBookingLink">
-          <button onclick="showBooking()">空き枠を見て仮予約する</button>
-        </div>
+        <button onclick="showBooking()">空き枠を見て仮予約する</button>
 
         <h2>登録車両</h2>
         ${vehiclesHtml}
 
         <button class="secondary" onclick="showVehicleForm()">車両を追加する</button>
-
-        <div class="small">
-          顧客ID：${escapeHtml(currentCustomer.customer_id)} / 会員種別：${escapeHtml(currentCustomer.member_type || '非会員')} / 状態：${escapeHtml(currentCustomer.status)}
-        </div>
         ${adminHtml}
         <button class="secondary" onclick="location.reload()">再読み込み</button>
       `;
@@ -436,7 +430,7 @@
       const padding = new Date(calendarYear, calendarMonth - 1, 1).getDay();
       const blanks = Array.from({ length: padding }, () => '<div></div>').join('');
       const days = calendarDays.map(day => `
-        <button class="calendar-day status-${escapeAttr(day.profile === 'premium_only' ? 'P' : day.symbol)}" onclick="${admin ? `showAdminDay('${escapeAttr(day.date)}')` : home ? `showHomeDayAvailability('${escapeAttr(day.date)}')` : `showDayAvailability('${escapeAttr(day.date)}')`}">
+        <button class="calendar-day status-${escapeAttr(day.profile === 'premium_only' ? 'P' : day.symbol)}" ${admin ? `onclick="showAdminDay('${escapeAttr(day.date)}')"` : 'disabled'}>
           <span class="day-number">${escapeHtml(day.date.slice(-2))}</span>
           <strong class="day-symbol">${escapeHtml(day.profile === 'premium_only' ? 'P' : day.symbol)}</strong>
         </button>
@@ -471,39 +465,8 @@
         calendar.innerHTML = '月間カレンダーを取得しています...';
         await loadMonthAvailability();
         calendar.innerHTML = `${calendarToolbarHtml(false, true)}${calendarGridHtml(false, true)}`;
-        const today = new Date().toISOString().slice(0, 10);
-        const initialDay = calendarDays.find(day => day.date >= today) || calendarDays[0];
-        if (initialDay) await showHomeDayAvailability(initialDay.date);
       } catch (error) {
         calendar.innerHTML = '<strong>月間カレンダーを取得できませんでした。</strong>';
-        console.error(error);
-      }
-    }
-
-    async function showHomeDayAvailability(date) {
-      const detail = document.getElementById('homeDayAvailability');
-      const bookingLink = document.getElementById('homeBookingLink');
-      if (!detail) return;
-      try {
-        detail.innerHTML = '空き枠を取得しています...';
-        const response = await jsonp(API_URL, { action: 'dayAvailability', lineUserId: lineProfile.userId, date });
-        if (!response.ok) throw new Error(response.message || '日別の空き状況を取得できません。');
-        const a = response.availability;
-        const displaySymbol = a.profile === 'premium_only' ? 'P' : a.symbol;
-        const slots = (a.slots || []).map(s => `<div>${escapeHtml(s.start_time)}〜${escapeHtml(s.end_time)}：${escapeHtml(s.symbol)}</div>`).join('') || '対象枠がありません。';
-        detail.innerHTML = `
-          <strong>${escapeHtml(a.date)}：${escapeHtml(displaySymbol)}</strong><br>
-          ${displaySymbol === 'P' && a.symbol !== '○' ? 'この日はPremium会員専用です。' : ''}
-          ${slots}
-        `;
-        if (bookingLink) {
-          bookingLink.innerHTML = a.symbol === '○'
-            ? '<button onclick="showBooking()">この日の予約枠を選ぶ</button>'
-            : '<div class="small">この日は現在、仮予約へ進めません。</div>';
-        }
-      } catch (error) {
-        detail.innerHTML = '<strong>空き枠を取得できませんでした。</strong>';
-        if (bookingLink) bookingLink.innerHTML = '<button onclick="showBooking()">空き枠を見て仮予約する</button>';
         console.error(error);
       }
     }
