@@ -240,7 +240,7 @@
         }
 
         currentCustomer = response.customer;
-        currentVehicles = response.vehicles || [];
+        currentVehicles = visibleVehicles(response.vehicles);
         currentIsAdmin = !!response.isAdmin;
 
         if (needsInitialRegistration(currentCustomer, currentVehicles)) {
@@ -260,6 +260,17 @@
       if (!customer.name) return true;
       if (!vehicles || vehicles.length === 0) return true;
       return false;
+    }
+
+    // Apps Script から boolean / 文字列のどちらで返っても、非表示車両は描画しない。
+    // active が未設定の既存行は、従来どおり表示対象として扱う。
+    function isVisibleVehicle(vehicle) {
+      const active = vehicle && vehicle.active;
+      return !(active === false || String(active || '').trim().toUpperCase() === 'FALSE');
+    }
+
+    function visibleVehicles(vehicles) {
+      return (vehicles || []).filter(isVisibleVehicle);
     }
 
     function renderInitialForm() {
@@ -349,7 +360,7 @@
         }
 
         currentCustomer = response.customer;
-        currentVehicles = response.vehicles || [];
+        currentVehicles = visibleVehicles(response.vehicles);
         currentIsAdmin = !!response.isAdmin;
 
         renderHome();
@@ -362,8 +373,9 @@
     function renderHome() {
       app.className = 'status';
 
-      const vehiclesHtml = currentVehicles.length
-        ? currentVehicles.map(v => `
+      const visibleVehicleList = visibleVehicles(currentVehicles);
+      const vehiclesHtml = visibleVehicleList.length
+        ? visibleVehicleList.map(v => `
             <div class="vehicle-card">
               <strong>${escapeHtml(v.vehicle_nickname || v.model || '登録車両')}</strong><br>
               メーカー：${escapeHtml(v.maker || '')}<br>
@@ -593,7 +605,7 @@
           throw new Error(JSON.stringify(response, null, 2));
         }
 
-        currentVehicles = response.vehicles || [];
+        currentVehicles = visibleVehicles(response.vehicles);
 
         app.className = 'status';
         app.innerHTML = `
@@ -635,7 +647,7 @@
           throw new Error(JSON.stringify(response, null, 2));
         }
 
-        currentVehicles = response.vehicles || [];
+        currentVehicles = visibleVehicles(response.vehicles);
 
         app.className = 'status';
         app.innerHTML = `
@@ -668,7 +680,7 @@
         }
 
         currentCustomer = response.customer;
-        currentVehicles = response.vehicles || [];
+        currentVehicles = visibleVehicles(response.vehicles);
         currentMenus = response.menus || [];
         currentOpenSlots = response.openSlots || [];
         currentAllowedSlotCounts = response.allowedSlotCounts || [1,2,3,4,5];
@@ -689,7 +701,7 @@
     }
 
     function renderBookingForm() {
-      const vehicleOptions = currentVehicles.map(v => `
+      const vehicleOptions = visibleVehicles(currentVehicles).map(v => `
         <option value="${escapeAttr(v.vehicle_id)}" ${v.vehicle_id === selectedVehicleId ? 'selected' : ''}>
           ${escapeHtml(v.vehicle_nickname || v.model || v.vehicle_id)}
         </option>
