@@ -389,22 +389,30 @@
       app.innerHTML = `
         <strong>登録済みです</strong><br>
         ${currentIsAdmin ? '<span class="admin-badge">管理者としてログイン中</span><br>' : ''}
-        <br>
-        顧客ID：${escapeHtml(currentCustomer.customer_id)}<br>
-        氏名：${escapeHtml(currentCustomer.name)}<br>
-        LINE表示名：${escapeHtml(currentCustomer.line_display_name)}<br>
-        会員種別：${escapeHtml(currentCustomer.member_type || '非会員')}<br>
-        状態：${escapeHtml(currentCustomer.status)}<br>
+
+        <h2>予約可能日</h2>
+        <div id="homeCalendar" class="date-card">月間カレンダーを取得しています...</div>
+
+        <h2>選択日の空き枠</h2>
+        <div id="homeDayAvailability" class="date-card">日付を選択してください。</div>
+
+        <div id="homeBookingLink">
+          <button onclick="showBooking()">空き枠を見て仮予約する</button>
+        </div>
 
         <h2>登録車両</h2>
         ${vehiclesHtml}
 
         <button class="secondary" onclick="showVehicleForm()">車両を追加する</button>
-        <button class="secondary" onclick="showCustomerCalendar()">営業日カレンダーを見る</button>
-        <button onclick="showBooking()">空き枠を見て仮予約する</button>
+
+        <div class="small">
+          顧客ID：${escapeHtml(currentCustomer.customer_id)} / 会員種別：${escapeHtml(currentCustomer.member_type || '非会員')} / 状態：${escapeHtml(currentCustomer.status)}
+        </div>
         ${adminHtml}
         <button class="secondary" onclick="location.reload()">再読み込み</button>
       `;
+
+      refreshHomeCalendar();
     }
 
     function formatMonthLabel(year, month) {
@@ -423,36 +431,81 @@
       return response;
     }
 
-    function calendarGridHtml(admin) {
+    function calendarGridHtml(admin, home) {
       if (!calendarDays.length) return '<div class="date-card">この月の営業日情報はありません。</div>';
       const padding = new Date(calendarYear, calendarMonth - 1, 1).getDay();
       const blanks = Array.from({ length: padding }, () => '<div></div>').join('');
       const days = calendarDays.map(day => `
-        <button class="calendar-day status-${escapeAttr(day.symbol)}" onclick="${admin ? `showAdminDay('${escapeAttr(day.date)}')` : `showDayAvailability('${escapeAttr(day.date)}')`}">
+        <button class="calendar-day status-${escapeAttr(day.profile === 'premium_only' ? 'P' : day.symbol)}" onclick="${admin ? `showAdminDay('${escapeAttr(day.date)}')` : home ? `showHomeDayAvailability('${escapeAttr(day.date)}')` : `showDayAvailability('${escapeAttr(day.date)}')`}">
           <span class="day-number">${escapeHtml(day.date.slice(-2))}</span>
-          <strong class="day-symbol">${escapeHtml(day.symbol)}</strong>
+          <strong class="day-symbol">${escapeHtml(day.profile === 'premium_only' ? 'P' : day.symbol)}</strong>
         </button>
       `).join('');
       return `<div class="business-calendar">${blanks}${days}</div>`;
     }
 
-    function calendarToolbarHtml(admin) {
-      const render = admin ? 'renderAdminCalendar()' : 'renderCustomerCalendar()';
+    function calendarToolbarHtml(admin, home) {
       return `
         <div class="calendar-toolbar">
-          <button class="secondary" onclick="changeCalendarMonth(-1, ${admin ? 'true' : 'false'})">前月</button>
+          <button class="secondary" onclick="changeCalendarMonth(-1, ${admin ? 'true' : 'false'}, ${home ? 'true' : 'false'})">前月</button>
           <span class="calendar-title">${formatMonthLabel(calendarYear, calendarMonth)}</span>
-          <button class="secondary" onclick="changeCalendarMonth(1, ${admin ? 'true' : 'false'})">翌月</button>
+          <button class="secondary" onclick="changeCalendarMonth(1, ${admin ? 'true' : 'false'}, ${home ? 'true' : 'false'})">翌月</button>
         </div>
         <div class="calendar-legend">○ 通常予約可能　P Premium専用　× 予約不可・満枠　休 休業</div>
       `;
     }
 
-    async function changeCalendarMonth(delta, admin) {
+    async function changeCalendarMonth(delta, admin, home) {
       const d = new Date(calendarYear, calendarMonth - 1 + delta, 1);
       calendarYear = d.getFullYear();
       calendarMonth = d.getMonth() + 1;
-      if (admin) await renderAdminCalendar(); else await renderCustomerCalendar();
+      if (home) await refreshHomeCalendar();
+      else if (admin) await renderAdminCalendar();
+      else await showCustomerCalendar();
+    }
+
+    async function refreshHomeCalendar() {
+      const calendar = document.getElementById('homeCalendar');
+      if (!calendar) return;
+      try {
+        calendar.innerHTML = '月間カレンダーを取得しています...';
+        await loadMonthAvailability();
+        calendar.innerHTML = `${calendarToolbarHtml(false, true)}${calendarGridHtml(false, true)}`;
+        const today = new Date().toISOString().slice(0, 10);
+        const initialDay = calendarDays.find(day => day.date >= today) || calendarDays[0];
+        if (initialDay) await showHomeDayAvailability(initialDay.date);
+      } catch (error) {
+        calendar.innerHTML = '<strong>月間カレンダーを取得できませんでした。</strong>';
+        console.error(error);
+      }
+    }
+
+    async function showHomeDayAvailability(date) {
+      const detail = document.getElementById('homeDayAvailability');
+      const bookingLink = document.getElementById('homeBookingLink');
+      if (!detail) return;
+      try {
+        detail.innerHTML = '空き枠を取得しています...';
+        const response = await jsonp(API_URL, { action: 'dayAvailability', lineUserId: lineProfile.userId, date });
+        if (!response.ok) throw new Error(response.message || '日別の空き状況を取得できません。');
+        const a = response.availability;
+        const displaySymbol = a.profile === 'premium_only' ? 'P' : a.symbol;
+        const slots = (a.slots || []).map(s => `<div>${escapeHtml(s.start_time)}〜${escapeHtml(s.end_time)}：${escapeHtml(s.symbol)}</div>`).join('') || '対象枠がありません。';
+        detail.innerHTML = `
+          <strong>${escapeHtml(a.date)}：${escapeHtml(displaySymbol)}</strong><br>
+          ${displaySymbol === 'P' && a.symbol !== '○' ? 'この日はPremium会員専用です。' : ''}
+          ${slots}
+        `;
+        if (bookingLink) {
+          bookingLink.innerHTML = a.symbol === '○'
+            ? '<button onclick="showBooking()">この日の予約枠を選ぶ</button>'
+            : '<div class="small">この日は現在、仮予約へ進めません。</div>';
+        }
+      } catch (error) {
+        detail.innerHTML = '<strong>空き枠を取得できませんでした。</strong>';
+        if (bookingLink) bookingLink.innerHTML = '<button onclick="showBooking()">空き枠を見て仮予約する</button>';
+        console.error(error);
+      }
     }
 
     async function showCustomerCalendar() {
@@ -469,8 +522,8 @@
       app.innerHTML = `
         <strong>営業日カレンダー</strong><br>
         日付を選ぶと空き状況を確認できます。火・水はPremium会員専用です。
-        ${calendarToolbarHtml(false)}
-        ${calendarGridHtml(false)}
+        ${calendarToolbarHtml(false, false)}
+        ${calendarGridHtml(false, false)}
         <button class="secondary" onclick="renderHome()">ホームに戻る</button>
       `;
     }
