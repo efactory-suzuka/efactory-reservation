@@ -151,6 +151,19 @@
       color: #666;
     }
 
+    .calendar-toolbar { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+    .calendar-toolbar button { width: auto; margin-top: 0; padding: 9px 12px; }
+    .calendar-title { flex: 1; text-align: center; font-weight: 700; }
+    .business-calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+    .calendar-day { min-height: 64px; margin-top: 0; padding: 8px 2px; background: #fff; color: #222; border: 1px solid #ddd; border-radius: 7px; }
+    .calendar-day .day-number { display: block; font-size: 12px; }
+    .calendar-day .day-symbol { display: block; margin-top: 4px; font-size: 22px; }
+    .calendar-day.status-P { background: #fff7d6; color: #6a4b00; }
+    .calendar-day.status-休 { background: #eee; color: #666; }
+    .calendar-day.status-× { background: #fafafa; color: #888; }
+    .calendar-day:disabled { opacity: 1; }
+    .calendar-legend { margin: 8px 0; font-size: 12px; color: #555; }
+
     pre {
       white-space: pre-wrap;
       font-size: 12px;
@@ -170,7 +183,7 @@
 
   <script>
     const LIFF_ID = '2010526723-NFUasgWN';
-    const API_URL = 'https://script.google.com/macros/s/AKfycbzwogK43RNJA29ujZsdadNXDHFuDk4envDHyQxyTNY5KhcyfyHGTTdybUV-jipnIxxBVA/exec';
+    const API_URL = 'https://script.google.com/macros/s/AKfycbzlj1-GyAD6AxwmeyWaZuTbUBGcBzvL0LgRgSCXfeSdhoOTjpRyZAiYWIA7WTtG_7AvnA/exec';
 
     const app = document.getElementById('app');
 
@@ -187,6 +200,9 @@
     let selectedMenuId = '';
     let selectedSlotIds = [];
     let selectedSlotDate = '';
+    let calendarYear = new Date().getFullYear();
+    let calendarMonth = new Date().getMonth() + 1;
+    let calendarDays = [];
 
     async function main() {
       try {
@@ -384,10 +400,99 @@
         ${vehiclesHtml}
 
         <button class="secondary" onclick="showVehicleForm()">車両を追加する</button>
+        <button class="secondary" onclick="showCustomerCalendar()">営業日カレンダーを見る</button>
         <button onclick="showBooking()">空き枠を見て仮予約する</button>
         ${adminHtml}
         <button class="secondary" onclick="location.reload()">再読み込み</button>
       `;
+    }
+
+    function formatMonthLabel(year, month) {
+      return `${year}年${month}月`;
+    }
+
+    async function loadMonthAvailability() {
+      const response = await jsonp(API_URL, {
+        action: 'monthAvailability',
+        lineUserId: lineProfile.userId,
+        year: calendarYear,
+        month: calendarMonth
+      });
+      if (!response.ok) throw new Error(response.message || '月間カレンダーを取得できません。');
+      calendarDays = response.days || [];
+      return response;
+    }
+
+    function calendarGridHtml(admin) {
+      if (!calendarDays.length) return '<div class="date-card">この月の営業日情報はありません。</div>';
+      const padding = new Date(calendarYear, calendarMonth - 1, 1).getDay();
+      const blanks = Array.from({ length: padding }, () => '<div></div>').join('');
+      const days = calendarDays.map(day => `
+        <button class="calendar-day status-${escapeAttr(day.symbol)}" onclick="${admin ? `showAdminDay('${escapeAttr(day.date)}')` : `showDayAvailability('${escapeAttr(day.date)}')`}">
+          <span class="day-number">${escapeHtml(day.date.slice(-2))}</span>
+          <strong class="day-symbol">${escapeHtml(day.symbol)}</strong>
+        </button>
+      `).join('');
+      return `<div class="business-calendar">${blanks}${days}</div>`;
+    }
+
+    function calendarToolbarHtml(admin) {
+      const render = admin ? 'renderAdminCalendar()' : 'renderCustomerCalendar()';
+      return `
+        <div class="calendar-toolbar">
+          <button class="secondary" onclick="changeCalendarMonth(-1, ${admin ? 'true' : 'false'})">前月</button>
+          <span class="calendar-title">${formatMonthLabel(calendarYear, calendarMonth)}</span>
+          <button class="secondary" onclick="changeCalendarMonth(1, ${admin ? 'true' : 'false'})">翌月</button>
+        </div>
+        <div class="calendar-legend">○ 通常予約可能　P Premium専用　× 予約不可・満枠　休 休業</div>
+      `;
+    }
+
+    async function changeCalendarMonth(delta, admin) {
+      const d = new Date(calendarYear, calendarMonth - 1 + delta, 1);
+      calendarYear = d.getFullYear();
+      calendarMonth = d.getMonth() + 1;
+      if (admin) await renderAdminCalendar(); else await renderCustomerCalendar();
+    }
+
+    async function showCustomerCalendar() {
+      try {
+        app.className = 'status';
+        app.innerHTML = '月間カレンダーを取得しています...';
+        await loadMonthAvailability();
+        renderCustomerCalendar();
+      } catch (error) { renderError(error); }
+    }
+
+    function renderCustomerCalendar() {
+      app.className = 'status';
+      app.innerHTML = `
+        <strong>営業日カレンダー</strong><br>
+        日付を選ぶと空き状況を確認できます。火・水はPremium会員専用です。
+        ${calendarToolbarHtml(false)}
+        ${calendarGridHtml(false)}
+        <button class="secondary" onclick="renderHome()">ホームに戻る</button>
+      `;
+    }
+
+    async function showDayAvailability(date) {
+      try {
+        app.className = 'status';
+        app.innerHTML = '日別の空き状況を取得しています...';
+        const response = await jsonp(API_URL, { action: 'dayAvailability', lineUserId: lineProfile.userId, date });
+        if (!response.ok) throw new Error(response.message || '日別の空き状況を取得できません。');
+        const a = response.availability;
+        const slots = (a.slots || []).map(s => `<div class="date-card">${escapeHtml(s.start_time)}〜${escapeHtml(s.end_time)}：${escapeHtml(s.symbol)}</div>`).join('') || '<div class="date-card">対象枠がありません。</div>';
+        const canOpenBooking = a.symbol === '○';
+        app.className = 'status';
+        app.innerHTML = `
+          <strong>${escapeHtml(a.date)} の空き状況：${escapeHtml(a.symbol)}</strong><br>
+          ${a.symbol === 'P' ? 'この日はPremium会員専用です。' : ''}
+          ${slots}
+          ${canOpenBooking ? '<button onclick="showBooking()">予約枠を選ぶ</button>' : ''}
+          <button class="secondary" onclick="renderCustomerCalendar()">カレンダーへ戻る</button>
+        `;
+      } catch (error) { renderError(error); }
     }
 
     function showVehicleForm(vehicleId) {
@@ -901,8 +1006,76 @@
         </div>
         ${activeHtml}
 
+        <h2>営業日カレンダー</h2>
+        <div class="small">通常営業、完全休業、Premium専用、時間変更を設定できます。休業へ変更しても既存予約はキャンセルされません。</div>
+        <button class="secondary" onclick="showAdminCalendar()">営業日設定を開く</button>
         <button class="secondary" onclick="renderHome()">ホームに戻る</button>
       `;
+    }
+
+    async function showAdminCalendar() {
+      try {
+        app.className = 'status';
+        app.innerHTML = '営業日カレンダーを取得しています...';
+        await loadMonthAvailability();
+        renderAdminCalendar();
+      } catch (error) { renderError(error); }
+    }
+
+    function renderAdminCalendar() {
+      app.className = 'status';
+      app.innerHTML = `
+        <strong>管理者：営業日設定</strong><br>
+        日付を選んで営業日ルールを設定します。既存予約・Google Calendar・LINE通知は変更しません。
+        ${calendarToolbarHtml(true)}
+        ${calendarGridHtml(true)}
+        <button class="secondary" onclick="showAdminDashboard()">管理者画面に戻る</button>
+      `;
+    }
+
+    async function showAdminDay(date) {
+      try {
+        app.className = 'status';
+        app.innerHTML = '日別設定を取得しています...';
+        const response = await jsonp(API_URL, { action: 'dayAvailability', lineUserId: lineProfile.userId, date });
+        if (!response.ok) throw new Error(response.message || '日別設定を取得できません。');
+        const a = response.availability;
+        app.className = 'status';
+        app.innerHTML = `
+          <strong>${escapeHtml(date)} の営業日設定</strong><br>
+          現在：${escapeHtml(a.profile)} / ${escapeHtml(a.symbol)}　既存予約：${escapeHtml(a.active_reservations || 0)}件
+          <label>営業日ルール</label>
+          <select id="overrideStatus">
+            <option value="open">通常営業</option>
+            <option value="closed">完全休業</option>
+            <option value="premium_only">Premium専用</option>
+            <option value="custom">時間変更</option>
+            <option value="clear">通常ルールへ戻す</option>
+          </select>
+          <label>custom時間（時間変更時のみ、例：09:00-10:30,13:00-14:30）</label>
+          <input id="overrideTimes" type="text" placeholder="09:00-10:30,13:00-14:30">
+          <div class="warning">完全休業にしても、既存予約は自動キャンセルされず、Google CalendarとLINE通知も変更しません。</div>
+          <button onclick="saveScheduleOverride('${escapeAttr(date)}')">保存する</button>
+          <button class="secondary" onclick="renderAdminCalendar()">カレンダーへ戻る</button>
+        `;
+      } catch (error) { renderError(error); }
+    }
+
+    async function saveScheduleOverride(date) {
+      try {
+        const status = getValue('overrideStatus');
+        const profile = getValue('overrideTimes');
+        if (status === 'custom' && !profile) { alert('時間変更には時間を入力してください。'); return; }
+        if (!confirm(`${date} を「${status}」に設定します。既存予約は変更しません。保存しますか？`)) return;
+        app.className = 'status';
+        app.innerHTML = '営業日設定を保存しています...';
+        const response = await jsonp(API_URL, {
+          action: 'saveScheduleOverride', lineUserId: lineProfile.userId, date, status, profile
+        });
+        if (!response.ok) throw new Error(response.message || '営業日設定を保存できません。');
+        await loadMonthAvailability();
+        renderAdminCalendar();
+      } catch (error) { renderError(error); }
     }
     async function approveReservation(reservationId, slotHandling) {
       const label = slotHandling === 'keep_open'
